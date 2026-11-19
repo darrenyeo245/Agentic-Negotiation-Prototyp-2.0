@@ -79,20 +79,27 @@ async function start() {
       setSession(await api('/api/rooms/' + encodeURIComponent(id) + '/join', { invite: secret }, null));
     } else {
       const requested = location.pathname.match(/^\/r\/([A-F0-9]{10})\/?$/)?.[1];
-      const saved = getRecord(requested || sessionStorage.getItem('paktwerk.active'));
-      if (saved) setSession(saved);
-      else if (requested) {
+      if (!requested) {
+        // Without a room in the address, the tab opens in the workspace instead of creating a demo room.
+        visit('rooms');
+        return;
+      }
+      const saved = getRecord(requested);
+      if (!saved) {
         throw new Error(
           'Für diesen Raum fehlt in diesem Tab der persönliche Zugang. Öffnen Sie den Gastlink oder den ursprünglichen Raum-Tab.',
         );
-      } else setSession(await api('/api/rooms', { scenario: 'boxes', demo: true }, null));
+      }
+      setSession(saved);
     }
     await refresh(true);
   } catch (e) {
     app.innerHTML =
       `<main id="main" class="entry-error"><div class="brand">${brand}</div><h1>Raumzugang</h1><p>${
         h(errorText(e))
-      }</p>${button('new-demo', 'Eigenen Demoraum öffnen', 'arrow', 'btn primary')}</main>`;
+      }</p><div class="crumb-actions">${button('rooms', 'Zum Arbeitsbereich', 'grid', 'btn secondary')}${
+        button('new-demo', 'Eigenen Demoraum öffnen', 'arrow', 'btn primary')
+      }</div></main>`;
   }
 }
 function remember() {
@@ -122,7 +129,7 @@ async function refresh(force = false) {
   }
 }
 function shell(body) {
-  const p = view.room, s = view.me.side;
+  const p = view?.room, s = view?.me.side;
   return `<header class="topbar"><div class="top-inner">
     <button class="brand" data-cmd="workspace" aria-label="Paktwerk Arbeitsbereich">${brand}</button>
     <nav class="primary-nav" aria-label="Hauptnavigation">${
@@ -132,13 +139,15 @@ function shell(body) {
       }>${ic(i, 16)}${l}</button>`
     ).join('')
   }</nav>
-    <div class="top-profile"><span class="secure">${
-    ic('shield', 15)
-  }Geschützter Raum</span><button class="profile" data-cmd="identity">${
-    avatar(p.companies[s], s, true)
-  }<span><strong>${h(p.companies[s])}</strong><small>Firma ${s} · ${
-    s === 'A' ? 'Einkauf' : 'Lieferant'
-  }</small></span>${ic('down', 13)}</button></div></div></header>
+    <div class="top-profile">${
+    view
+      ? `<span class="secure">${ic('shield', 15)}Geschützter Raum</span><button class="profile" data-cmd="identity">${
+        avatar(p.companies[s], s, true)
+      }<span><strong>${h(p.companies[s])}</strong><small>Firma ${s} · ${
+        s === 'A' ? 'Einkauf' : 'Lieferant'
+      }</small></span>${ic('down', 13)}</button>`
+      : ''
+  }</div></div></header>
     <main class="workspace" id="main">${body}</main>
     <footer class="page-foot"><span>${
     ic('lock', 13)
@@ -150,10 +159,12 @@ function roomList() {
   ).sort((a, b) => b.at - a.at);
   return `<div class="crumb-row"><div class="crumb">${
     ic('grid', 15)
-  }Arbeitsbereich</div></div><div class="page-heading"><h1>Meine Verhandlungsräume</h1>${
-    button('new', 'Neue Verhandlung', 'plus', 'btn primary')
-  }</div>
+  }Arbeitsbereich</div></div><div class="page-heading"><h1>Meine Verhandlungsräume</h1><div class="crumb-actions">${
+    button('new-demo', 'Demoraum öffnen', 'arrow', 'btn secondary')
+  }${button('new', 'Neue Verhandlung', 'plus', 'btn primary')}</div></div>
     <section class="card room-list">${
+    items.length ? '' : '<p class="empty-copy">In diesem Tab gibt es noch keine Verhandlungsräume. Legen Sie eine neue Verhandlung an oder öffnen Sie den vorbereiteten Demoraum.</p>'
+  }${
     items.map((s) =>
       `<button data-cmd="open-room" data-id="${h(s.room)}"><span class="heading-icon">${
         ic('folder', 22)
@@ -164,7 +175,7 @@ function roomList() {
   }</section>`;
 }
 function render() {
-  if (!view) return;
+  if (!view && page === 'workspace') return;
   const thread = document.querySelector('#thread');
   const previous = thread
     ? { top: thread.scrollTop, nearEnd: thread.scrollHeight - thread.scrollTop - thread.clientHeight < 40 }
@@ -211,6 +222,10 @@ function close() {
 }
 function visit(nextPage, nextTab = 'overview') {
   close();
+  if (nextPage === 'workspace' && !view) nextPage = 'rooms';
+  // The address follows the view, so reloading the workspace does not reopen the last room.
+  if (nextPage === 'rooms') history.replaceState(null, '', '/');
+  if (nextPage === 'workspace') history.replaceState(null, '', '/r/' + session.room);
   page = nextPage;
   tab = nextTab;
   render();
