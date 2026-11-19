@@ -181,20 +181,26 @@ class ClaudeNegotiation(unittest.TestCase):
 
 
 class EnvFile(unittest.TestCase):
-    def test_env_file_fills_only_unset_variables(self):
+    def write(self, tmp, text):
+        with open(tmp + "/.env", "w", encoding="utf-8") as f:
+            f.write(text)
+        return tmp + "/.env"
+
+    def test_env_file_wins_over_a_stale_shell_variable(self):
         from unittest.mock import patch
-        from paktwerk.env import load_env
-        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"PAKTWERK_SHELL": "shell"}, clear=False):
-            path = tmp + "/.env"
-            with open(path, "w", encoding="utf-8") as f:
-                f.write("# Kommentar\nPAKTWERK_KEY=sk-ant-123 # Notiz\nexport PAKTWERK_QUOTED=\"a b\"\n"
-                        "PAKTWERK_SHELL=datei\nkaputt\n")
-            load_env(path)
-            load_env(tmp + "/fehlt")
-            import os
-            self.assertEqual(os.environ["PAKTWERK_KEY"], "sk-ant-123")
-            self.assertEqual(os.environ["PAKTWERK_QUOTED"], "a b")
-            self.assertEqual(os.environ["PAKTWERK_SHELL"], "shell")
+        from paktwerk.claude import api_key
+        with tempfile.TemporaryDirectory() as tmp, patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-..."}):
+            path = self.write(tmp, '# Kommentar\nexport ANTHROPIC_API_KEY="sk-ant-api03-echt" # Notiz\n')
+            self.assertEqual(api_key(path), "sk-ant-api03-echt")
+
+    def test_shell_applies_without_env_file_and_placeholders_are_refused(self):
+        from unittest.mock import patch
+        from paktwerk.claude import api_key
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "sk-ant-api03-shell"}):
+                self.assertEqual(api_key(tmp + "/fehlt"), "sk-ant-api03-shell")
+            with patch.dict("os.environ", {}, clear=True), self.assertRaisesRegex(RuntimeError, "Platzhalter"):
+                api_key(self.write(tmp, "ANTHROPIC_API_KEY=sk-ant-...\n"))
 
 
 class Migration(unittest.TestCase):

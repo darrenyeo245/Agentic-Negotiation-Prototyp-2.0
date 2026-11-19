@@ -7,6 +7,8 @@ anything is sent.
 """
 import json
 import logging
+import os
+from pathlib import Path
 
 from .domain import AgentFailure, Problem, assessment, exhausted, package, plain
 from .scenarios import euros, without_price
@@ -24,6 +26,8 @@ ENDINGS = {"A": ("no_fit", "alternative"), "B": ("no_fit", "capacity", "alternat
 ATTEMPTS = 3
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 API_ERROR = anthropic.APIError if anthropic else ()
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+PLACEHOLDER = "sk-ant-..."
 log = logging.getLogger(__name__)
 
 STRATEGY = {
@@ -47,6 +51,26 @@ KIND_LABELS = {"request": "Anfrage", "question": "Rückfrage", "message": "Nachr
                "end": "Abbruch", "joined": "Beitritt", "mode": "Vertretungswechsel", "approve": "Freigabe",
                "agreement": "Einigung"}
 ACTORS = {"agent": "Agent", "human": "Mensch", "system": "Plattform"}
+
+
+def api_key(path=ENV_FILE):
+    """ANTHROPIC_API_KEY from the project's .env file, which wins over the shell. Without it, the environment applies."""
+    key = None
+    try:
+        for line in Path(path).read_text(encoding="utf-8").splitlines():
+            name, sep, value = line.strip().removeprefix("export ").partition("=")
+            if sep and name.strip() == "ANTHROPIC_API_KEY":
+                key = value.split(" #", 1)[0].strip().strip("\"'") or None
+    except FileNotFoundError:
+        pass
+    key = key or os.environ.get("ANTHROPIC_API_KEY")
+    if key == PLACEHOLDER:
+        raise RuntimeError(f"ANTHROPIC_API_KEY enthält noch den Platzhalter {PLACEHOLDER}. "
+                           "Bitte den eigenen Schlüssel in .env eintragen.")
+    if not (key or os.environ.get("ANTHROPIC_AUTH_TOKEN") or (Path.home() / ".config" / "anthropic").exists()):
+        raise RuntimeError("Kein Schlüssel für die Claude API gefunden. Bitte ANTHROPIC_API_KEY in .env eintragen "
+                           "(Vorlage: .env.example).")
+    return key
 
 
 def explain(exc, model):
@@ -295,10 +319,12 @@ class ClaudeAgents:
 
     def __init__(self, model=MODEL, effort=EFFORT, clients=None):
         if clients is None:
+            key = api_key()
             if anthropic is None:
                 raise RuntimeError("Für Claude-Agenten wird das Paket „anthropic“ benötigt: "
                                    "python3 -m pip install -r requirements.txt")
-            clients = {side: anthropic.Anthropic(timeout=180, max_retries=3) for side in SIDES}
+            # Each company's agent gets its own client. Without a key, the SDK uses its own credential sources.
+            clients = {side: anthropic.Anthropic(api_key=key, timeout=180, max_retries=3) for side in SIDES}
         self.label = f"claude:{model}"
         self.negotiators = {side: Negotiator(side, clients[side], model, effort) for side in SIDES}
 

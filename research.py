@@ -2,11 +2,9 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
 
 from paktwerk.claude import EFFORT, MODEL, ClaudeAgents
 from paktwerk.domain import assessment, unmet
-from paktwerk.env import load_env
 from paktwerk.scenarios import SCENARIOS, STRATEGIES, STRATEGY_VERSIONS, euros
 from paktwerk.store import Store
 from paktwerk.templates import mandate_template
@@ -98,7 +96,6 @@ def main():
     args = parser.parse_args()
     agents = None
     if args.agents == "claude":
-        load_env(Path(__file__).resolve().parent / ".env")
         try:
             agents = ClaudeAgents(model=args.model, effort=args.effort)
         except RuntimeError as exc:

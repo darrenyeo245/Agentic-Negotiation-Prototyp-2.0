@@ -15,7 +15,6 @@ from urllib.parse import parse_qs, urlsplit
 
 from paktwerk.claude import EFFORT, MODEL, ClaudeAgents
 from paktwerk.domain import Problem
-from paktwerk.env import load_env
 from paktwerk.scenarios import SCENARIOS, STRATEGIES, schema
 from paktwerk.store import Store
 from paktwerk.templates import mandate_template
@@ -156,15 +155,9 @@ def serve(host, port, path, agents=None, delay=4):
 
 def claude_agents(model, effort):
     try:
-        agents = ClaudeAgents(model=model, effort=effort)
+        return ClaudeAgents(model=model, effort=effort)
     except RuntimeError as exc:
         sys.exit(f"{exc}\nAlternativ mit --agents regeln ohne Claude starten.")
-    if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-            or (Path.home() / ".config" / "anthropic").exists()):
-        print("Hinweis: Keine Zugangsdaten für die Claude API gefunden. Bitte ANTHROPIC_API_KEY in .env "
-              "oder als Umgebungsvariable setzen. "
-              "Ohne Zugang geben die Agenten die Vertretung an ihre Firmen zurück.", file=sys.stderr, flush=True)
-    return agents
 
 
 if __name__ == "__main__":
@@ -178,7 +171,6 @@ if __name__ == "__main__":
     parser.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default=EFFORT,
                         help=f"Denkaufwand je Verhandlungszug (Standard {EFFORT})")
     args = parser.parse_args()
-    load_env(ROOT / ".env")
     logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s: %(message)s")
     logging.getLogger("paktwerk").setLevel(logging.INFO)
     os.umask(0o077)

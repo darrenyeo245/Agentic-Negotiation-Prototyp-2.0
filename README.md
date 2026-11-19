@@ -13,7 +13,7 @@ cp .env.example .env && chmod 600 .env   # Schlüssel in .env eintragen
 .venv/bin/python app.py
 ```
 
-`app.py` und `research.py --agents claude` lesen `ANTHROPIC_API_KEY` aus der Datei `.env` im Projektordner. Eine in der Shell gesetzte Umgebungsvariable hat Vorrang. `.env` steht in `.gitignore` und wird nicht eingecheckt.
+Die Claude-Agenten lesen `ANTHROPIC_API_KEY` direkt aus der Datei `.env` im Projektordner. Der Wert aus `.env` hat Vorrang vor einer Shell-Variablen. Fehlt die Datei oder der Eintrag, gilt `ANTHROPIC_API_KEY` aus der Umgebung. `.env` steht in `.gitignore` und wird nicht eingecheckt.
 
 Standardmäßig verhandeln beide Agenten mit `claude-opus-5-5` und dem Denkaufwand `medium`. Mit `--model` und `--effort` lassen sich beide ändern. `--agents regeln` startet die deterministischen, regelbasierten Agenten ohne API-Zugang. Fehlt der Zugang oder ist die API nicht erreichbar, gibt der betroffene Agent die Vertretung mit einem Hinweis im Gesprächsverlauf an seine Firma zurück. Jeder neue Demoraum löst sofort einen ersten Zug des Einkaufsagenten aus und damit einen kostenpflichtigen API-Aufruf.
 
