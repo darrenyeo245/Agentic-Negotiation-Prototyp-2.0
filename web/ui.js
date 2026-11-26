@@ -1,7 +1,6 @@
 const paths = {
   grid:
     '<rect x="3" y="3" width="7" height="7" rx="1.3"/><rect x="14" y="3" width="7" height="7" rx="1.3"/><rect x="3" y="14" width="7" height="7" rx="1.3"/><rect x="14" y="14" width="7" height="7" rx="1.3"/>',
-  lab: '<path d="M9 3h6m-5 0v6l-6.2 9.4A1.7 1.7 0 0 0 5.3 21h13.4a1.7 1.7 0 0 0 1.5-2.6L14 9V3M7 15h10"/>',
   lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3m-4 5v2"/>',
   shield:
     '<path d="m12 3 8 3v6c0 4.7-3.4 7.4-8 9.3C7.4 19.4 4 16.7 4 12V6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
@@ -40,8 +39,6 @@ const paths = {
   list:
     '<path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4" cy="6" r=".6"/><circle cx="4" cy="12" r=".6"/><circle cx="4" cy="18" r=".6"/>',
   edit: '<path d="m4 16 12-12a2 2 0 0 1 3 3L7 19l-4 1zm10-10 4 4"/>',
-  play: '<path d="m8 4 12 8-12 8z"/>',
-  download: '<path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/>',
   flag: '<path d="M5 21V4c5-4 9 3 14 0v10c-5 3-9-4-14 0"/>',
   folder: '<path d="M3 6a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
   calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 10h18"/>',
@@ -76,14 +73,6 @@ export const states = {
   ended: 'Beendet',
 };
 export const strategies = { direkt: 'Direktes Paket', stufen: 'Schrittweise Konzession' };
-export const reasons = {
-  alternative: 'Vorteilhaftere Alternative',
-  no_fit: 'Kein tragfähiges Paket',
-  capacity: 'Kapazität ausgeschöpft',
-  deadline: 'Frist abgelaufen',
-  round_limit: 'Schrittgrenze erreicht',
-  validation: 'Prüfung gescheitert',
-};
 export const live = (r) => ['active', 'review'].includes(r.status);
 export const amount = (f, v) =>
   v == null ? 'Entfällt' : f.key === 'price' ? money(v) : `${number(v)} ${f.unit}`;

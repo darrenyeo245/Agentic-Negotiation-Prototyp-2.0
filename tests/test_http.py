@@ -7,7 +7,9 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app import Handler
+from paktwerk.scenarios import Boxes
 from paktwerk.store import Store
+from tests.support import scripted, turn
 
 
 class Request:
@@ -24,7 +26,9 @@ class Request:
 
 class BrowserProtocol(unittest.TestCase):
     def setUp(self):
-        self.store = Store(delay=0)
+        agents, _ = scripted(buyer=[turn("accept", "Wir empfehlen dieses Paket.")],
+                             seller=[turn("offer", "", {**Boxes.request, "price": 31000})])
+        self.store = Store(delay=0, agents=agents)
         self.addCleanup(self.store.close)
 
     def request(self, method, path, data=None, token=None):
@@ -53,8 +57,9 @@ class BrowserProtocol(unittest.TestCase):
         self.assertNotIn("limits", profile)
         self.assertEqual(self.request("POST", path + "/action", {"action": "mode", "epoch": 0,
                          "mode": "agent", "mandate": profile}, b)[0], 200)
-        self.store.dispatch()
-        self.store.dispatch()
+        for _ in range(2):  # The supplier's agent offers, then the buyer's agent recommends it.
+            self.store.prepare()
+            self.store.dispatch()
         for side, credential in (("A", a), ("B", b)):
             _, view = self.request("GET", path, token=credential)
             self.assertEqual(view["me"]["side"], side)

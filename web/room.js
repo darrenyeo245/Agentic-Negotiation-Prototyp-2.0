@@ -15,13 +15,6 @@ import {
   time,
 } from './ui.js';
 
-const openLabels = {
-  early_qty: 'Menge der Teillieferung',
-  early_day: 'Termin der Teillieferung',
-  price: 'Gesamtpreis des neuen Pakets',
-  hours: 'Leistungsumfang',
-  due: 'Fertigstellungstermin',
-};
 const roleName = (side) => side === 'A' ? 'Einkauf' : 'Lieferant';
 
 export function roomHeader(v, tab) {
@@ -227,15 +220,6 @@ function representation(v) {
   }</section>`;
 }
 
-function openPoints(v) {
-  if (!v.openKeys.length) return '';
-  return `<section class="card open-points"><div class="panel-head"><h2>${
-    ic('list', 18)
-  }Offene Punkte</h2><span class="count">${v.openKeys.length}</span></div><ul>${
-    v.openKeys.map((k) => `<li><i></i>${h(openLabels[k] || k)}</li>`).join('')
-  }</ul></section>`;
-}
-
 export function overview(v, draft, connected) {
   const p = v.room;
   const review = p.status === 'review' || p.status === 'agreed';
@@ -248,9 +232,7 @@ export function overview(v, draft, connected) {
       }</span>${button('review', 'V' + p.offers.length + ' ansehen', 'arrow', 'text-btn')}</div>`
       : ''
   }
-    <div class="room-grid"><div class="main-column">${conversation(v, draft, connected)}${
-    openPoints(v)
-  }</div><aside>${summary(v)}${representation(v)}</aside></div>`;
+    <div class="room-grid"><div class="main-column">${conversation(v, draft, connected)}</div><aside>${summary(v)}${representation(v)}</aside></div>`;
 }
 
 export function offerPanel(v, version, compact = false) {

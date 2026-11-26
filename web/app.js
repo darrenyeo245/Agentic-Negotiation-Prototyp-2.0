@@ -1,7 +1,6 @@
 import { avatar, brand, button, fullDate, h, ic, statusName, tag, time } from './ui.js';
 import { mandateView, offerPanel, offers, overview, roomHeader } from './room.js';
 import { mandateFields, offerFields, optionFields, readMandate, readOffer, setupFields } from './forms.js';
-import { labPage, runDetail } from './lab.js';
 
 const app = document.querySelector('#app'),
   dialog = document.querySelector('#dialog'),
@@ -16,10 +15,7 @@ let session,
   ticket = 0,
   pending = false;
 let flow = null,
-  toastTimer,
-  research = null,
-  researchBusy = false,
-  labConfig = { scenario: 'all', repeats: 1 };
+  toastTimer;
 const getRecord = (id) => JSON.parse(sessionStorage.getItem(prefix + id) || 'null');
 const apiRoom = (suffix = '') => '/api/rooms/' + session.room + suffix;
 async function api(url, body, auth = session?.token) {
@@ -132,13 +128,9 @@ function shell(body) {
   const p = view?.room, s = view?.me.side;
   return `<header class="topbar"><div class="top-inner">
     <button class="brand" data-cmd="workspace" aria-label="Paktwerk Arbeitsbereich">${brand}</button>
-    <nav class="primary-nav" aria-label="Hauptnavigation">${
-    [['workspace', 'grid', 'Arbeitsbereich'], ['lab', 'lab', 'Forschungslabor']].map(([k, i, l]) =>
-      `<button data-cmd="${k}" class="nav-item ${(page === 'lab') === (k === 'lab') ? 'active' : ''}" ${
-        (page === 'lab') === (k === 'lab') ? 'aria-current="page"' : ''
-      }>${ic(i, 16)}${l}</button>`
-    ).join('')
-  }</nav>
+    <nav class="primary-nav" aria-label="Hauptnavigation"><button data-cmd="workspace" class="nav-item active" aria-current="page">${
+    ic('grid', 16)
+  }Arbeitsbereich</button></nav>
     <div class="top-profile">${
     view
       ? `<span class="secure">${ic('shield', 15)}Geschützter Raum</span><button class="profile" data-cmd="identity">${
@@ -182,9 +174,7 @@ function render() {
     : null;
   const input = document.activeElement?.id === 'message-text' ? document.activeElement : null;
   const selection = input ? [input.selectionStart, input.selectionEnd] : null;
-  const body = page === 'lab'
-    ? labPage(research, labConfig, researchBusy)
-    : page === 'rooms'
+  const body = page === 'rooms'
     ? roomList()
     : roomHeader(view, tab) + (tab === 'offers'
       ? offers(view)
@@ -193,7 +183,7 @@ function render() {
       : overview(view, draft, connected));
   app.innerHTML = shell(body);
   document.title =
-    (page === 'lab' ? 'Forschungslabor' : page === 'rooms' ? 'Arbeitsbereich' : view.room.subject) +
+    (page === 'rooms' ? 'Arbeitsbereich' : view.room.subject) +
     ' · Paktwerk';
   const next = document.querySelector('#thread');
   if (next && previous) next.scrollTop = previous.nearEnd ? next.scrollHeight : previous.top;
@@ -407,9 +397,6 @@ async function command(cmd, el) {
     case 'rooms':
       visit('rooms');
       break;
-    case 'lab':
-      visit('lab');
-      break;
     case 'offers':
       visit('workspace', 'offers');
       break;
@@ -497,18 +484,6 @@ async function command(cmd, el) {
     case 'remove-option':
       if (dialog.querySelectorAll('[data-option]').length > 1) el.closest('[data-option]').remove();
       else notify('Mindestens ein leistbares Paket ist erforderlich.');
-      break;
-    case 'export': {
-      const blob = new Blob([JSON.stringify(research, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob), a = document.createElement('a');
-      a.href = url;
-      a.download = 'paktwerk-forschung.json';
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 3000);
-      break;
-    }
-    case 'run-detail':
-      modal('Laufprotokoll', runDetail(research.runs[Number(el.dataset.index)]));
       break;
   }
 }
@@ -629,17 +604,6 @@ document.addEventListener('submit', async (e) => {
           { mandate: m, mandateVersion: f.version },
           'Ihr privates Mandat wurde gespeichert.',
         );
-      }
-    } else if (form.id === 'research-form') {
-      if (researchBusy) return;
-      labConfig = { scenario: form.elements.scenario.value, repeats: form.elements.repeats.valueAsNumber };
-      researchBusy = true;
-      render();
-      try {
-        research = await api('/api/research', labConfig, null);
-      } finally {
-        researchBusy = false;
-        render();
       }
     }
   } catch (err) {

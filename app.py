@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Paktwerk's local HTTP server. Claude agents need the anthropic package; the rule-based agents only the standard library."""
+"""Paktwerk's local HTTP server. Both firms are represented by Claude agents, and a person can take over at any time."""
 import argparse
 import json
 import logging
@@ -18,7 +18,6 @@ from paktwerk.domain import Problem
 from paktwerk.scenarios import SCENARIOS, STRATEGIES, schema
 from paktwerk.store import Store
 from paktwerk.templates import mandate_template
-from research import benchmark
 
 ROOT = Path(__file__).resolve().parent
 PUBLIC = ROOT / "web"
@@ -81,11 +80,6 @@ class Handler(BaseHTTPRequestHandler):
             result = {"schema": schema(s), "mandate": mandate_template(s, "A"), "strategies": STRATEGIES}
         elif path == "/api/rooms" and method == "POST":
             result = db.create(data)
-        elif path == "/api/research" and method == "POST":
-            try:
-                result = benchmark(data.get("scenario", "all"), data.get("repeats", 1))
-            except (TypeError, ValueError) as e:
-                raise Problem(str(e))
         else:
             match = ROOM_ROUTE.fullmatch(path)
             if not match:
@@ -123,7 +117,7 @@ class Handler(BaseHTTPRequestHandler):
             self.log_message("%s %s (%s)", self.command, urlsplit(self.path).path, code)
 
 
-def serve(host, port, path, agents=None, delay=4):
+def serve(host, port, path, agents, delay=4):
     db = Store(path, delay=delay, agents=agents)
     http = ThreadingHTTPServer((host, port), Handler)
     http.store = db
@@ -139,8 +133,8 @@ def serve(host, port, path, agents=None, delay=4):
 
     worker = threading.Thread(target=work, name="agent-outbox", daemon=True)
     worker.start()
-    engine = f"Claude-Agenten ({agents.label})" if agents else "regelbasierte Agenten"
-    print(f"Paktwerk läuft auf http://{host}:{http.server_port} · {engine} · Datenbank {path}", flush=True)
+    print(f"Paktwerk läuft auf http://{host}:{http.server_port} · Claude-Agenten ({agents.label}) · Datenbank {path}",
+          flush=True)
     try:
         http.serve_forever()
     except KeyboardInterrupt:
@@ -157,7 +151,7 @@ def claude_agents(model, effort):
     try:
         return ClaudeAgents(model=model, effort=effort)
     except RuntimeError as exc:
-        sys.exit(f"{exc}\nAlternativ mit --agents regeln ohne Claude starten.")
+        sys.exit(str(exc))
 
 
 if __name__ == "__main__":
@@ -165,8 +159,6 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--db", type=Path, default=ROOT / ".paktwerk" / "rooms.sqlite3")
-    parser.add_argument("--agents", choices=("claude", "regeln"), default="claude",
-                        help="Claude-Agenten über die Claude API (Standard) oder die regelbasierten Agenten")
     parser.add_argument("--model", default=MODEL, help=f"Claude-Modell beider Agenten (Standard {MODEL})")
     parser.add_argument("--effort", choices=("low", "medium", "high", "xhigh", "max"), default=EFFORT,
                         help=f"Denkaufwand je Verhandlungszug (Standard {EFFORT})")
@@ -175,4 +167,4 @@ if __name__ == "__main__":
     logging.getLogger("paktwerk").setLevel(logging.INFO)
     os.umask(0o077)
     args.db.parent.mkdir(parents=True, exist_ok=True)
-    serve(args.host, args.port, args.db, claude_agents(args.model, args.effort) if args.agents == "claude" else None)
+    serve(args.host, args.port, args.db, claude_agents(args.model, args.effort))

@@ -1,39 +1,16 @@
 """Two Claude agents, one per company, driven by scripted clients instead of the network."""
+import io
 import json
 import sqlite3
 import tempfile
 import unittest
-from types import SimpleNamespace
 
 from paktwerk.claude import MODEL, ClaudeAgents
 from paktwerk.domain import context
 from paktwerk.scenarios import Boxes
 from paktwerk.store import Store
 from paktwerk.templates import mandate_template
-
-
-def turn(action, message="", terms=None, final=False, end=None, note=""):
-    return {"action": action, "message": message, "terms": terms, "final": final, "endReason": end, "privateNote": note}
-
-
-class Client:
-    """Stands in for one company's own Anthropic client and records everything that company's agent is shown."""
-
-    def __init__(self, *replies):
-        self.replies, self.requests = list(replies), []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
-
-    def create(self, **request):
-        self.requests.append(request)
-        reply = self.replies.pop(0)
-        reply = reply() if callable(reply) else reply
-        if isinstance(reply, Exception):
-            raise reply
-        return SimpleNamespace(stop_reason="end_turn", content=[SimpleNamespace(type="thinking", thinking=""),
-                                                                SimpleNamespace(type="text", text=json.dumps(reply))])
-
-    def seen(self):
-        return json.dumps([[r["system"], r["messages"]] for r in self.requests], default=str, ensure_ascii=False)
+from tests.support import Client, scripted, turn
 
 
 class ClaudeNegotiation(unittest.TestCase):
@@ -180,6 +157,45 @@ class ClaudeNegotiation(unittest.TestCase):
         self.assertEqual(r["events"][-1]["note"], "Wir beschaffen anderweitig.")
 
 
+class ClaudeSeries(unittest.TestCase):
+    def test_series_keeps_a_failed_run_and_traces_every_decision(self):
+        from research import Recorder, Trace, series
+        wrong = turn("accept")  # The seller moves first and cannot recommend its own 290 € package.
+        scripts = iter([
+            ([turn("offer", "", {**Boxes.request, "price": 32500}), turn("accept", "Empfohlen.", note="EMPFOHLEN-A")],
+             [turn("offer", "Gegenvorschlag.", {**Boxes.request, "price": 31000}, note="PLAN-B")]),
+            ([], [wrong, wrong, wrong]),
+        ])
+
+        def build():
+            buyer, seller = next(scripts)
+            recorders = {"A": Recorder(Client(*buyer)), "B": Recorder(Client(*seller))}
+            return Trace(ClaudeAgents(clients=recorders), recorders)
+        build.label, build.effort = "claude:test", "medium"
+        out = io.StringIO()
+        report = series(build, "boxes", ("flexibel",), ("direkt",), repeats=2, out=out)
+
+        agreed, failed = report["runs"]
+        self.assertEqual((agreed["agreed"], agreed["terms"]["price"]), (True, 31000))
+        self.assertEqual([d["side"] for d in agreed["decisions"]], ["B", "A"])
+        self.assertEqual([c["attempt"] for c in agreed["decisions"][1]["requests"]], [1, 2])
+        self.assertEqual([d["privateNote"] for d in agreed["decisions"]], ["PLAN-B", "EMPFOHLEN-A"])
+        self.assertEqual({k: agreed["usage"][k] for k in ("requests", "retries", "inputTokens", "fallbacks", "models")},
+                         {"requests": 3, "retries": 1, "inputTokens": 300, "fallbacks": 0, "models": [MODEL]})
+        self.assertAlmostEqual(agreed["usage"]["usd"], (300 * 4 + 150 * 20) / 1e6)
+
+        self.assertEqual((failed["status"], failed["agreed"]), ("unfinished", False))
+        self.assertIn("Nach 3 Versuchen", failed["failure"])
+        self.assertEqual(len(failed["decisions"][0]["requests"]), 3)
+        self.assertIn("Nach 3 Versuchen", failed["decisions"][0]["failure"])
+
+        self.assertEqual([json.loads(line)["repeat"] for line in out.getvalue().splitlines()], [1, 2])
+        condition = report["conditions"][0]
+        self.assertEqual((condition["runs"], condition["agreed"], condition["failed"]), (2, 1, 1))
+        self.assertEqual(condition["outcomes"], {"agreed": 1, "unfinished": 1})
+        self.assertEqual(report["usage"]["requests"], 6)
+
+
 class EnvFile(unittest.TestCase):
     def write(self, tmp, text):
         with open(tmp + "/.env", "w", encoding="utf-8") as f:
@@ -204,7 +220,7 @@ class EnvFile(unittest.TestCase):
 
 
 class Migration(unittest.TestCase):
-    def test_queued_jobs_of_a_rule_only_database_survive(self):
+    def test_queued_jobs_of_an_older_database_survive(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = tmp + "/rooms.sqlite3"
             old = sqlite3.connect(path)
@@ -216,7 +232,7 @@ class Migration(unittest.TestCase):
                 INSERT INTO jobs VALUES('ABCDEF0123', 'A', 0, 1, 1, 5, '{"kind":"end","reason":"no_fit"}');
             """)
             old.close()
-            db = Store(path)
+            db = Store(path, agents=scripted()[0])
             self.addCleanup(db.close)
             columns = {c["name"]: c["notnull"] for c in db.db.execute("PRAGMA table_info(jobs)")}
             self.assertEqual(columns["action"], 0)

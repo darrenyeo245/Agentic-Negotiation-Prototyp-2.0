@@ -1,4 +1,4 @@
-"""Package validation, mandate evaluation and deterministic, role-local policies."""
+"""Package validation, mandate evaluation and the limits that end every negotiation."""
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -129,13 +129,6 @@ def require_fit(s, side, m, terms):
         raise Problem(" ".join(result["reasons"]), 422)
 
 
-def compatible_facts(m, facts):
-    if not facts or m is None:
-        return True
-    return any(all((value >= o["floor"] if k == "price" else o["terms"].get(k) == value)
-                   for k, value in facts.items()) for o in m["options"])
-
-
 @dataclass(frozen=True)
 class Context:
     scenario: object
@@ -153,107 +146,11 @@ def finish(code):
     return {"kind": "end", "reason": code}
 
 
-def offer(terms, final=False):
-    return {"kind": "offer", "terms": terms, "final": final}
-
-
-def buyer_policy(ctx):
-    s, m, p = ctx.scenario, ctx.own, ctx.shared
-    current = p["offers"][-1] if p["offers"] else None
-    last = next((e for e in reversed(p["events"]) if e["kind"] in ("message", "offer", "question")), None)
-    limit = min(m["limits"]["price"], m["batnaValue"])
-    if limit == 0:
-        return finish("alternative")
-    if last and last.get("topic") == "requirements" and last["side"] == "B":
-        # The buyer can answer with a binding package without naming its private ceiling.
-        return offer({**m["limits"], "price": min(m["preferred"], limit)})
-    if last and last["side"] == "B" and last["kind"] == "message":
-        return {"kind": "question", "missing": [k for k in s.focus if k not in p["facts"]]}
-    if current and current["side"] == "B":
-        t = current["terms"]
-        failures = unmet(s, t, {**m["limits"], "price": limit})
-        if not failures:
-            return {"kind": "recommend", "version": current["version"]}
-        if current["final"]:
-            return finish("no_fit")
-        if all(f.key == "price" for f in failures):
-            previous = [o for o in p["offers"] if o["side"] == "A" and without_price(o["terms"]) == without_price(t)]
-            target = m["preferred"] if m["priority"] == "price" else max(m["preferred"], t["price"] - m["step"])
-            if m["strategy"] == "stufen":
-                target = max(1, target - m["step"] + len(previous) * m["step"])
-            target = min(limit, target)
-            if previous and target <= previous[-1]["terms"]["price"]:
-                return {"kind": "question", "topic": "price_concession", "missing": ["price"]}
-            return offer({**t, "price": target})
-    return {"kind": "question", "missing": [k for k in s.focus if k not in p["facts"]]}
-
-
-def seller_policy(ctx):
-    s, m, p = ctx.scenario, ctx.own, ctx.shared
-    current = p["offers"][-1] if p["offers"] else None
-    incoming = current if current and current["side"] == "A" else None
-    buyer_offer = next((o for o in reversed(p["offers"]) if o["side"] == "A"), None)
-    requested = without_price(buyer_offer["terms"]) if buyer_offer else p["request"]
-    if incoming:
-        o = capacity(m, incoming["terms"])
-        if o and incoming["terms"]["price"] >= max(o["target"], o["cost"] + m["batnaValue"]):
-            return {"kind": "recommend", "version": incoming["version"]}
-    facts = without_price(p["facts"]) if p["factSource"] == "message" else {}
-    if not requested and not facts:
-        asked = any(e.get("topic") == "requirements" for e in p["events"])
-        if not asked:
-            return {"kind": "question", "topic": "requirements", "missing": [k for k in s.focus if k != "price"]}
-    options = [o for o in m["options"] if all(o["terms"].get(k) == v for k, v in facts.items())]
-    if not options:
-        return finish("capacity")
-
-    if not current and p["factSource"] != "message":
-        opening = options[0]
-        price = max(opening["target"], opening["cost"] + m["batnaValue"])
-        if price <= PRICE.maximum:
-            return offer({**opening["terms"], "price": price})
-
-    def priority(o):
-        terms = {**o["terms"], "price": o["target"]}
-        timing = tuple(terms.get(k) or 10_000 for k in s.timing)
-        preference = (o["target"], timing) if m["priority"] == "price" else (timing, o["target"])
-        return len(unmet(s, terms, requested)), preference
-    options.sort(key=priority)
-    for o in options:
-        floor = max(o["floor"], o["cost"] + m["batnaValue"])
-        if floor > PRICE.maximum:
-            continue
-        previous = [x for x in p["offers"] if x["side"] == "B" and without_price(x["terms"]) == o["terms"]]
-        if not previous:
-            price = max(o["target"], floor) + (2 * m["step"] if m["strategy"] == "stufen" else 0)
-        else:
-            price = max(floor, previous[-1]["terms"]["price"] - m["step"])
-        price = min(price, PRICE.maximum)
-        # An explicitly confirmed total continues to bind the next proposal.
-        if "price" in p["facts"] and p["factSource"] == "message":
-            price = p["facts"]["price"]
-            if price < floor:
-                continue
-        if incoming and without_price(incoming["terms"]) == o["terms"]:
-            if incoming["terms"]["price"] >= price:
-                return {"kind": "recommend", "version": incoming["version"]}
-        if previous and price >= previous[-1]["terms"]["price"]:
-            continue
-        # A rejected operational package does not become feasible through a price cut.
-        if previous and unmet(s, {**o["terms"], "price": price}, requested):
-            continue
-        return offer({**o["terms"], "price": price}, final=m["shareTerms"] and price == floor)
-    return finish("no_fit")
-
-
 def exhausted(ctx):
-    """Deadline and step limit end the exchange for every kind of agent."""
+    """Deadline and step limit end the exchange before an agent is asked for another turn."""
     if ctx.remaining_seconds <= 0:
         return finish("deadline")
     if ctx.shared["turns"] >= ctx.shared["maxTurns"]:
         return finish("round_limit")
     return None
 
-
-def decide(ctx):
-    return exhausted(ctx) or (buyer_policy(ctx) if ctx.side == "A" else seller_policy(ctx))

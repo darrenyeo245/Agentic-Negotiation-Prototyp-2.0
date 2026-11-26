@@ -1,7 +1,5 @@
-"""Public scenario descriptions, package semantics and clarification grammar."""
-import re
+"""Public scenario descriptions and package semantics."""
 from dataclasses import dataclass
-from decimal import Decimal
 
 
 def euros(cents):
@@ -20,39 +18,6 @@ class Field:
 
 
 PRICE = Field("price", "Gesamtpreis", "€", "max", 1, 100_000_000)
-WORDS = {"ein": 1, "einen": 1, "zwei": 2, "drei": 3, "vier": 4, "fünf": 5,
-         "sechs": 6, "sieben": 7, "acht": 8, "neun": 9, "zehn": 10, "vierzig": 40}
-NUMBER = r"(?:[0-9]{1,5}|" + "|".join(WORDS) + r")"
-
-
-def number(word):
-    return int(word) if word.isdecimal() else WORDS[word]
-
-
-def explicit_price(sentence):
-    match = re.fullmatch(
-        r"(?:der )?gesamtpreis(?: inkl(?:usive|\.)? (?:der )?(?:lieferung|nebenkosten))?"
-        r"(?: beträgt| liegt bei| ist|:)?\s*(\d{1,6}(?:[,.]\d{1,2})?)\s*(?:€|euro)"
-        r"(?: (?:inklusive|einschließlich) (?:lieferung|nebenkosten))?", sentence)
-    return {"price": int(Decimal(match[1].replace(",", ".")) * 100)} if match else {}
-
-
-def working_facts(s, text, known):
-    """Merge explicit clauses, reopening terms that were qualified or contradicted."""
-    facts = dict(known)
-    seen, disputed = {}, set()
-    for clause in re.split(r"(?<!inkl\.)(?<!\d\.)(?<=[.!?])\s+(?=[A-ZÄÖÜ])", text.strip()):
-        parsed = s.facts(clause)
-        uncertain = re.search(r"\b(?:nicht|kein\w*|vielleicht|eventuell|unklar|offen|falls|wenn|vorbehalt|unverbindlich)\b", clause, re.I)
-        if uncertain:
-            for key, pattern in s.references.items():
-                if re.search(pattern, clause, re.I):
-                    facts.pop(key, None)
-        for key, value in parsed.items():
-            if key in seen and seen[key] != value:
-                disputed.add(key)
-            seen[key] = facts[key] = value
-    return {k: v for k, v in facts.items() if k not in disputed}
 
 
 class Boxes:
@@ -66,10 +31,6 @@ class Boxes:
               Field("early_qty", "Erste Teillieferung", "Stück", "min", 0),
               Field("early_day", "Termin der Teillieferung", "Werktage", "max", 1, 365, True),
               Field("final_day", "Vollständige Lieferung", "Werktage", "max", 1, 365), PRICE)
-    focus = ("early_qty", "early_day", "price")
-    timing = ("early_day", "final_day")
-    references = {"early_qty": r"stück|boxen|teilmenge", "early_day": r"werktag|termin",
-                  "price": r"preis|kosten|euro|€"}
     request = {"quantity": 100, "early_qty": 40, "early_day": 5, "final_day": 10}
     opening = {"quantity": 100, "early_qty": 0, "early_day": None, "final_day": 10, "price": 29000}
     public_rule = "Gesamtpreise in Euro einschließlich Lieferung. Lieferfristen zählen in Werktagen ab beidseitiger Freigabe."
@@ -108,30 +69,6 @@ class Boxes:
             when = f"Mindestens {terms['early_qty']} davon benötigen wir binnen {terms['early_day']} Werktagen, den Rest binnen {terms['final_day']} Werktagen."
         return f"Wir fragen {terms['quantity']} Versandboxen an. {when}"
 
-    @staticmethod
-    def facts(text):
-        # Only affirmative, fully matched clauses become working facts.
-        normalized = " ".join(text.lower().strip().rstrip(".!").split())
-        prefix = r"(?:(?:wir (?:können|bestätigen|liefern|schaffen):?|ja,?) )?"
-        qty = rf"({NUMBER})\s*(?:stück|boxen|versandboxen)"
-        day = rf"(?:binnen|in|innerhalb von|spätestens in) ({NUMBER}) werktag(?:en|e)?"
-        match = re.fullmatch(prefix + qty + " " + day + r"(?: (?:früher )?liefern| liefern wir| sind möglich)?", normalized)
-        if match:
-            return {"early_qty": number(match[1]), "early_day": number(match[2])}
-        match = re.fullmatch(prefix + qty + r" (?:früher liefern|als teillieferung(?: liefern)?)", normalized)
-        if match:
-            return {"early_qty": number(match[1])}
-        match = re.fullmatch(r"(?:die )?teillieferung (?:erfolgt |liefern wir )?" + day, normalized)
-        if match:
-            return {"early_day": number(match[1])}
-        return explicit_price(normalized)
-
-    @staticmethod
-    def question(missing):
-        names = {"early_qty": "die genaue Teilmenge", "early_day": "den Liefertermin in Werktagen",
-                 "price": "den Gesamtpreis inklusive Lieferung"}
-        return question_for(names, missing)
-
 
 class Service:
     key = "service"
@@ -142,9 +79,6 @@ class Service:
     price_note = "inkl. Nebenkosten"
     fields = (Field("hours", "Leistungsumfang", "Stunden", "min"),
               Field("due", "Fertigstellung", "Werktage", "max", 1, 365), PRICE)
-    focus = ("hours", "due", "price")
-    timing = ("due",)
-    references = {"hours": r"stunden|umfang", "due": r"werktag|termin", "price": r"preis|kosten|euro|€"}
     request = {"hours": 16, "due": 8}
     opening = {"hours": 12, "due": 12, "price": 140000}
     public_rule = "Das Paket umfasst Wartungsstunden vor Ort. Der Gesamtpreis enthält alle Nebenkosten. Termine zählen ab beidseitiger Freigabe."
@@ -165,25 +99,6 @@ class Service:
     @staticmethod
     def request_text(terms):
         return f"Wir benötigen mindestens {terms['hours']} Stunden Wartung vor Ort, abgeschlossen binnen {terms['due']} Werktagen."
-
-    @staticmethod
-    def facts(text):
-        sentence = text.lower().strip().rstrip(".!").strip()
-        m = re.fullmatch(rf"(?:wir bieten )?({NUMBER}) (?:wartungsstunden|stunden) (?:binnen|in) ({NUMBER}) werktagen", sentence)
-        return {"hours": number(m[1]), "due": number(m[2])} if m else explicit_price(sentence)
-
-    @staticmethod
-    def question(missing):
-        return question_for({"hours": "den Leistungsumfang in Stunden", "due": "den Fertigstellungstermin",
-                             "price": "den Gesamtpreis inklusive Nebenkosten"}, missing)
-
-
-def question_for(names, missing):
-    if not missing:
-        return "Können Sie die besprochenen Konditionen als vollständiges Angebot einstellen?"
-    labels = [names[k] for k in missing]
-    phrase = ", ".join(labels[:-1]) + " und " + labels[-1] if len(labels) > 1 else labels[0]
-    return f"Können Sie uns {phrase} bestätigen?"
 
 
 def without_price(t):

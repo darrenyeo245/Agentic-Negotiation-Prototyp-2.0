@@ -15,7 +15,7 @@ from .scenarios import euros, without_price
 
 try:
     import anthropic
-except ImportError:  # The rule-based agents and the test suite run without the SDK.
+except ImportError:  # The test suite runs without the SDK, using simulated API clients.
     anthropic = None
 
 MODEL = "claude-opus-5-5"
@@ -47,7 +47,7 @@ DISCLOSURE = {
     ("B", False): "Lege nur die angebotenen Konditionen offen.",
 }
 RULE_WORDS = {"exact": "genau", "min": "mindestens", "max": "höchstens"}
-KIND_LABELS = {"request": "Anfrage", "question": "Rückfrage", "message": "Nachricht", "recommend": "Empfehlung",
+KIND_LABELS = {"request": "Anfrage", "message": "Nachricht", "recommend": "Empfehlung",
                "end": "Abbruch", "joined": "Beitritt", "mode": "Vertretungswechsel", "approve": "Freigabe",
                "agreement": "Einigung"}
 ACTORS = {"agent": "Agent", "human": "Mensch", "system": "Plattform"}

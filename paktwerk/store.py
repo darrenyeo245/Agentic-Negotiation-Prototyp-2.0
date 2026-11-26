@@ -8,9 +8,8 @@ import threading
 import time
 from contextlib import contextmanager
 
-from .domain import (AgentFailure, Problem, assessment, compatible_facts, context, decide, integer,
-                     mandate, package, plain, require_fit, unmet)
-from .scenarios import SCENARIOS, schema, without_price, working_facts
+from .domain import AgentFailure, Problem, assessment, context, integer, mandate, package, plain, require_fit
+from .scenarios import SCENARIOS, schema, without_price
 from .templates import mandate_template
 
 ENDINGS = {
@@ -22,7 +21,7 @@ ENDINGS = {
     "validation": "Die vorbereitete Antwort konnte nicht als zulässiges Paket versendet werden.",
 }
 LIVE = ("active", "review")
-# A job without an action waits for an asynchronous agent (Claude) to decide outside the write lock.
+# A job without an action waits for the AI agent to decide outside the write lock.
 JOBS = """CREATE TABLE IF NOT EXISTS jobs(room TEXT PRIMARY KEY REFERENCES rooms(id), side TEXT NOT NULL,
     epoch INTEGER, revision INTEGER, version INTEGER, due INTEGER, action TEXT)"""
 log = logging.getLogger(__name__)
@@ -63,9 +62,6 @@ def record_offer(s, p, now, side, actor, terms, final=False, note=None):
     version = len(p["offers"]) + 1
     p["offers"].append({"version": version, "side": side, "actor": actor, "at": now, "terms": terms, "final": final})
     p.update(status="active", approvals={}, recommendation=None, turn=other(side))
-    if side == "B":
-        p["facts"] = {k: terms[k] for k in s.focus} if not unmet(s, terms, p["request"]) else {}
-        p["factSource"] = "offer"
     text = s.describe(terms)
     if final:
         text += " Dies ist unser abschließendes Paket."
@@ -74,11 +70,11 @@ def record_offer(s, p, now, side, actor, terms, final=False, note=None):
 
 
 class Store:
-    def __init__(self, path=":memory:", delay=4, agents=None):
+    def __init__(self, path=":memory:", delay=4, *, agents):
         self.lock = threading.RLock()
         self.delay = delay
-        # None keeps the deterministic rule-based policies. Otherwise an engine such as ClaudeAgents
-        # decides in think(), outside the write lock, and its answer passes the same dispatch gate.
+        # The AI agents (ClaudeAgents) decide in think(), outside the write lock. Every answer passes the
+        # same dispatch gate as a human action, and a human can take over at any time.
         self.agents = agents
         self.thinking = set()
         self.db = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False, timeout=10)
@@ -95,7 +91,7 @@ class Store:
             CREATE INDEX IF NOT EXISTS room_deadlines ON rooms(active_until);
         """)
         if any(c["name"] == "action" and c["notnull"] for c in self.db.execute("PRAGMA table_info(jobs)")):
-            # Databases from the rule-only version require an action for every queued job.
+            # Older databases require an action for every queued job.
             self.db.executescript(f"""
                 BEGIN IMMEDIATE;
                 ALTER TABLE jobs RENAME TO jobs_v1;
@@ -173,7 +169,7 @@ class Store:
              "companies": names, "created": now, "deadline": now + minutes * 60, "maxTurns": max_turns,
              "turns": 0, "turn": "B", "status": "active", "revision": 0, "offers": [], "events": [],
              "modes": {"A": mode, "B": "human"}, "epochs": {"A": 0, "B": 0}, "joined": {"A": True, "B": False},
-             "request": req, "facts": {}, "factSource": None, "approvals": {}, "agreement": None,
+             "request": req, "approvals": {}, "agreement": None,
              "recommendation": None, "stopReason": None}
         event(p, now, "request", "A", mode, s.request_text(req) if req else f"Bitte senden Sie ein vollständiges Angebot für „{subject}“.")
         with self.transaction():
@@ -183,8 +179,6 @@ class Store:
             self.db.execute("INSERT INTO members(room,side) VALUES(?,?)", (room, "B"))
             if demo:
                 record_offer(s, p, now, "B", "human", package(s, s.opening))
-                if mode == "agent" and self.agents is None:
-                    self.apply_agent(p, "A", m, decide(context(s, "A", m, p, now)), now)
             self.finish_write(p, now)
         return {"room": room, "side": "A", "token": token}
 
@@ -233,12 +227,8 @@ class Store:
         side = p["turn"]
         if p["status"] != "active" or p["modes"][side] != "agent" or not p["joined"][side]:
             return
-        action = None
-        if self.agents is None:
-            own = self.own(p["id"], side)
-            action = encode(decide(context(SCENARIOS[p["scenario"]], side, own, p, now)))
         self.db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?)",
-                        (p["id"], side, p["epochs"][side], p["revision"], len(p["offers"]), now + self.delay, action))
+                        (p["id"], side, p["epochs"][side], p["revision"], len(p["offers"]), now + self.delay, None))
 
     def expire(self, p, now):
         if p["status"] in LIVE and now >= p["deadline"]:
@@ -258,8 +248,7 @@ class Store:
             job = self.db.execute("SELECT side FROM jobs WHERE room=?", (room,)).fetchone()
             return {"room": p, "schema": schema(s), "me": {"side": side, "mandate": m,
                     "assessment": review, "blocked": person["blocked"], "agentNote": self.note(room, side)},
-                    "preparing": job["side"] if job else None,
-                    "openKeys": [k for k in s.focus if k not in p["facts"]] if p["status"] == "active" else []}
+                    "preparing": job["side"] if job else None}
 
     def template(self, room, token, profile):
         if profile not in ("flexibel", "eng"):
@@ -276,20 +265,6 @@ class Store:
             record_offer(s, p, now, side, "agent", terms, action["final"], action.get("note"))
         elif kind == "message":
             event(p, now, kind, side, "agent", plain(action["text"], "eine Nachricht", 2000))
-            p["turn"], p["turns"] = other(side), p["turns"] + 1
-        elif kind == "question":
-            missing = action["missing"]
-            topic = action.get("topic", "package")
-            if topic == "requirements":
-                text = "Welchen Leistungsumfang und welche Termine benötigen Sie? Können Sie ein konkretes Wunschpaket nennen?"
-            elif topic == "price_concession":
-                text = "Können Sie für diesen Leistungsumfang und diese Termine einen günstigeren Gesamtpreis anbieten?"
-            else:
-                text = s.question(missing)
-            if side == "A" and m["shareTerms"] and p["request"] != without_price(m["limits"]):
-                p["request"] = without_price(m["limits"])
-                text = s.request_text(p["request"]) + " " + text
-            event(p, now, kind, side, "agent", text, missing=missing, topic=topic)
             p["turn"], p["turns"] = other(side), p["turns"] + 1
         elif kind == "recommend":
             v = action["version"]
@@ -349,10 +324,7 @@ class Store:
                 note = self.note(room, side)
             failure = None
             try:
-                if self.agents is None:
-                    action = decide(ctx)
-                else:
-                    action, note = self.agents.decide(ctx, note)
+                action, note = self.agents.decide(ctx, note)
             except AgentFailure as exc:
                 failure = str(exc)
             except Exception:
@@ -449,15 +421,6 @@ class Store:
                 p.update(status="active", turn=side, recommendation=None)
         elif action == "message":
             text = plain(data.get("text"), "eine Nachricht", 2000)
-            if side == "B":
-                known = p["facts"] if p["factSource"] == "message" else {}
-                facts = working_facts(s, text, known)
-                for f in s.fields:
-                    if f.key in facts:
-                        integer(facts[f.key], f.minimum, f.maximum, f.label)
-                if not compatible_facts(m, facts):
-                    raise Problem("Die genannten Konditionen sind nicht durch Ihr Mandat gedeckt.", 422)
-                p["facts"], p["factSource"] = facts, "message"
             event(p, now, "message", side, "human", text)
             p.update(status="active", recommendation=None)
             p["turn"], p["turns"] = other(side), p["turns"] + 1
